@@ -151,12 +151,17 @@ class NBAPropsAnalyzer:
             print(f"\nSearching for {player_name}...")
             response = requests.get(search_url, params=params)
             data = response.json()
+            print(f"Debug - Search response: {data}")  # Print response data
             
             if 'items' in data and len(data['items']) > 0:
                 for item in data['items']:
                     if item['displayName'].lower() == player_name.lower():
-                        return {"success": True, "id": item['id']}
-                return {"success": True, "id": data['items'][0]['id']}
+                        player_id = item['id']
+                        print(f"Debug - Found player ID: {player_id}")
+                        return {"success": True, "id": player_id}
+                player_id = data['items'][0]['id']
+                print(f"Debug - Using first result ID: {player_id}")
+                return {"success": True, "id": player_id}
             return {"success": False, "error": "Player not found"}
             
         except Exception as e:
@@ -217,91 +222,79 @@ class NBAPropsAnalyzer:
         """
         Determine the current NBA season.
         NBA season spans two years and officially starts in October.
-        Returns the later year (e.g., 2025 for the 2024-25 season)
+        Returns the earlier year (e.g., 2024 for the 2024-25 season)
         """
         current_date = datetime.now()
         if current_date.month >= 10:  # New season starts in October
-            return str(current_date.year + 1)
-        return str(current_date.year)
+            return str(current_date.year)
+        return str(current_date.year - 1)
 
-    def get_player_games(self, player_name: str, season: str = None) -> Dict:
-        """Get player's game logs for specified season or current season"""
+    def get_player_games(self, player_name: str) -> Dict:
+        """Get player's game logs"""
         player_id_result = self.get_player_id(player_name)
         if not player_id_result["success"]:
             return player_id_result
         
-        # If no season specified, use current season
-        if not season:
-            season = self.get_current_nba_season()
-        
         player_id = player_id_result["id"]
-        
-        # Try both regular season and postseason URLs
-        urls = [
-            f"https://www.espn.com/nba/player/gamelog/_/id/{player_id}/type/nba/year/{season}/seasontype/2",  # Regular season
-            f"https://www.espn.com/nba/player/gamelog/_/id/{player_id}/type/nba/year/{season}/seasontype/3"   # Postseason
-        ]
-        
-        all_games = []
+        # Using the basic player gamelog URL
+        url = f"https://www.espn.com/nba/player/gamelog/_/id/{player_id}"
         
         try:
-            print(f"Fetching game logs for {int(season)-1}-{season} season...")
+            print(f"Fetching game logs from: {url}")
+            response = requests.get(url, headers=self.headers)
             
-            for url in urls:
-                response = requests.get(url, headers=self.headers)
-                soup = BeautifulSoup(response.content, 'html.parser')
-                
-                table = soup.find('table', class_='Table')
-                if not table:
-                    continue
-                
-                rows = table.find_all('tr')
-                header_found = False
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Print table count for debugging
+            print(f"\nDebug - Looking for game tables")
+            game_tables = soup.find_all('table', class_='Table')
+            print(f"Found {len(game_tables)} tables")
+            
+            all_games = []
+            
+            # Process each table that might contain game data
+            for table in game_tables:
+                rows = table.find_all('tr')[1:]  # Skip header row
                 
                 for row in rows:
-                    # Look for the header row to identify the start of game data
-                    headers = row.find_all('th')
-                    if headers and any('DATE' in h.text for h in headers):
-                        header_found = True
-                        continue
-                        
-                    if not header_found:
-                        continue
-                        
                     cells = row.find_all('td')
                     
-                    # Skip rows that don't have enough cells or are monthly summaries
+                    # Skip rows that don't have enough cells or aren't game rows
                     if len(cells) >= 15 and any(month in cells[0].text.strip().lower() 
                         for month in ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']):
                         try:
                             raw_opponent = cells[1].text.strip()
                             opponent = self.clean_opponent_name(raw_opponent)
                             
+                            points_str = cells[16].text.strip() if len(cells) > 16 else '0'
+                            points = int(points_str) if points_str.isdigit() else 0
+                            
                             game_data = {
                                 'date': cells[0].text.strip(),
                                 'opponent': opponent,
-                                'minutes': int(cells[3].text.strip()),
-                                'points': int(cells[16].text.strip()),
-                                'rebounds': int(cells[10].text.strip()),
-                                'assists': int(cells[11].text.strip()),
-                                'blocks': int(cells[12].text.strip()),
-                                'steals': int(cells[13].text.strip())
+                                'minutes': cells[3].text.strip() if len(cells) > 3 else '0',
+                                'points': points,
+                                'rebounds': int(cells[10].text.strip() if len(cells) > 10 else '0'),
+                                'assists': int(cells[11].text.strip() if len(cells) > 11 else '0'),
+                                'blocks': int(cells[12].text.strip() if len(cells) > 12 else '0'),
+                                'steals': int(cells[13].text.strip() if len(cells) > 13 else '0')
                             }
                             all_games.append(game_data)
                             print(f"Found game: {game_data['date']} vs {game_data['opponent']} - {game_data['points']} pts")
                             
                         except (IndexError, ValueError) as e:
-                            print(f"Skipping row due to error: {str(e)}")
+                            print(f"Error processing row: {str(e)}")
                             continue
             
-            print(f"\nFound {len(all_games)} total games for the {int(season)-1}-{season} season")
+            print(f"\nFound {len(all_games)} total games")
             
             if not all_games:
-                return {"success": False, "error": "No games found for the specified season"}
+                return {"success": False, "error": "No games found"}
                 
             return {"success": True, "data": all_games}
             
         except Exception as e:
+            print(f"Error in get_player_games: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def analyze_vs_team(self, games: List[Dict], team: str, prop_type: str, prop_value: float, is_over: bool) -> Dict:
@@ -388,9 +381,9 @@ class NBAPropsAnalyzer:
                 "below": []
             }
             
-            # Get teams above
+            # Get teams above (in reverse order for proper standings order)
             start_above = max(0, team_index - positions)
-            for i in range(start_above, team_index):
+            for i in range(team_index - 1, start_above - 1, -1):
                 team = standings[team_conf][i]
                 teams["above"].append(team)
             
@@ -560,7 +553,7 @@ class NBAPropsAnalyzer:
                 return standings_result
             
             # Get player's game logs for specified season
-            games_result = self.get_player_games(player_name, season)
+            games_result = self.get_player_games(player_name)
             if not games_result["success"]:
                 return games_result
                 
@@ -621,23 +614,14 @@ def main():
     
     # Get user input
     player_name = input("Enter player name: ")
-    current_season = analyzer.get_current_nba_season()
-    print(f"\nCurrent NBA season is {int(current_season)-1}-{current_season}")
-    use_different_season = input("Use different season? (y/n): ").lower().startswith('y')
-    
-    if use_different_season:
-        season = input("Enter season end year (e.g., 2025 for 2024-25 season): ")
-    else:
-        season = current_season
-        
     print("\nProp Types: points, rebounds, assists, steals, blocks, threes")
     prop_type = input("Enter prop type: ").lower()
     prop_value = float(input("Enter prop value: "))
     is_over = input("Over or Under? (o/u): ").lower().startswith('o')
     opponent = input("Enter opponent team: ")
     
-    # Update perform_full_analysis call to include season
-    result = analyzer.perform_full_analysis(player_name, prop_type, prop_value, opponent, is_over, season)
+    # Perform analysis
+    result = analyzer.perform_full_analysis(player_name, prop_type, prop_value, opponent, is_over)
     
     if result["success"]:
         data = result["data"]
