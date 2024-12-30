@@ -275,10 +275,23 @@ class NBAPropsAnalyzer:
 
                     # Process regular-season game data
                     try:
+
                         opponent = self.clean_opponent_name(cells[1].text.strip())
-                        points = int(cells[16].text.strip()) if len(cells) > 16 else 0
-                        rebounds = int(cells[10].text.strip()) if len(cells) > 10 else 0
-                        assists = int(cells[11].text.strip()) if len(cells) > 11 else 0
+
+                        def safe_parse(value):
+                            """Parses stats safely, handling ranges like '2-2' or empty cells."""
+                            try:
+                                if '-' in value:
+                                    parts = value.split('-')
+                                    return sum(float(part) for part in parts) / len(parts)  # Average of the range
+                                return float(value)
+                            except ValueError:
+                                return 0.0
+                            
+                        points = safe_parse(cells[16].text.strip()) if len(cells) > 16 else 0.0
+                        rebounds = safe_parse(cells[10].text.strip()) if len(cells) > 10 else 0.0
+                        assists = safe_parse(cells[11].text.strip()) if len(cells) > 11 else 0.0
+                        threes = safe_parse(cells[8].text.strip()) if len(cells) > 8 else 0.0
                         pra = points + rebounds + assists
 
                         game_data = {
@@ -287,6 +300,7 @@ class NBAPropsAnalyzer:
                             'points': points,
                             'rebounds': rebounds,
                             'assists': assists,
+                            'threes': threes,
                             'pra': pra
                         }
                         all_games.append(game_data)
