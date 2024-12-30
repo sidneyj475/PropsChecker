@@ -256,24 +256,30 @@ class NBAPropsAnalyzer:
                             raw_opponent = cells[1].text.strip()
                             opponent = self.clean_opponent_name(raw_opponent)
                             
-                            # Fix three pointers parsing
-                            threes_str = cells[6].text.strip().split('-')[0]  # Get makes from "makes-attempts"
-                            threes = int(threes_str) if threes_str.isdigit() else 0
+                            points = int(cells[16].text.strip() if len(cells) > 16 else '0')
+                            rebounds = int(cells[10].text.strip() if len(cells) > 10 else '0')
+                            assists = int(cells[11].text.strip() if len(cells) > 11 else '0')
+                            pra = points + rebounds + assists  # Calculate PRA immediately
                             
                             game_data = {
                                 'date': cells[0].text.strip(),
                                 'opponent': opponent,
                                 'minutes': cells[3].text.strip() if len(cells) > 3 else '0',
-                                'points': int(cells[16].text.strip() if len(cells) > 16 else '0'),
-                                'rebounds': int(cells[10].text.strip() if len(cells) > 10 else '0'),
-                                'assists': int(cells[11].text.strip() if len(cells) > 11 else '0'),
+                                'points': points,
+                                'rebounds': rebounds,
+                                'assists': assists,
                                 'blocks': int(cells[12].text.strip() if len(cells) > 12 else '0'),
                                 'steals': int(cells[13].text.strip() if len(cells) > 13 else '0'),
-                                'threes': threes  # Store three pointers made
+                                'threes': int(cells[6].text.strip().split('-')[0]),
+                                'pra': pra  # Store PRA in game data
                             }
+                            
+                            print(f"Debug - Game data created:")
+                            print(game_data)
+                            
                             all_games.append(game_data)
                             print(f"Found game: {game_data['date']} vs {game_data['opponent']} - " +
-                                  f"{game_data['points']} pts, {game_data['threes']} threes")
+                                  f"PRA: {pra} (P:{points} R:{rebounds} A:{assists})")
                             
                         except (IndexError, ValueError) as e:
                             print(f"Error processing row: {str(e)}")
@@ -358,22 +364,29 @@ class NBAPropsAnalyzer:
             'steals': 'steals',
             'blocks': 'blocks',
             'threes': 'threes',
-            'three pointers': 'threes',  # Add alternative naming
-            '3pt': 'threes',             # Add alternative naming
-            '3s': 'threes'               # Add alternative naming
+            'pra': 'pra'
         }
         
         stat_key = stat_map.get(prop_type.lower())
         if not stat_key:
-            return {"success": False, "error": "Invalid prop type"}
+            return {"success": False, "error": f"Invalid prop type: {prop_type}"}
         
         # Debug print
         print(f"\nDebug - Looking for games against {team}")
         for game in games:
-            print(f"Debug - Checking game: Opponent = {game['opponent']}, {stat_key.title()} = {game[stat_key]}")
+            if stat_key == 'pra':
+                game_stat = game['points'] + game['rebounds'] + game['assists']  # Calculate PRA directly
+                print(f"Debug - Checking game: Opponent = {game['opponent']}, PRA = {game_stat} " +
+                      f"(P:{game['points']} R:{game['rebounds']} A:{game['assists']})")
+            else:
+                game_stat = game[stat_key]
+                print(f"Debug - Checking game: Opponent = {game['opponent']}, {stat_key.title()} = {game_stat}")
+            
             if game['opponent'] == team:
                 print(f"Debug - Found matching game!")
-                relevant_games.append(game)
+                game_with_stat = game.copy()
+                game_with_stat['stat_value'] = game_stat
+                relevant_games.append(game_with_stat)
         
         if not relevant_games:
             return {
@@ -393,7 +406,7 @@ class NBAPropsAnalyzer:
         performances = []
         
         for game in relevant_games:
-            stat_value = game[stat_key]
+            stat_value = game['stat_value']  # Use calculated stat
             total_value += stat_value
             
             # Check if prop hit
@@ -480,7 +493,7 @@ class NBAPropsAnalyzer:
         # Process teams above
         if "above" in surr_teams["data"]:
             for pos, team in enumerate(surr_teams["data"]["above"], 1):
-                analysis = self.analyze_vs_team(games, team['team'], prop_type, prop_value, is_over)
+                analysis = self.analyze_performance(games, team['team'], prop_type, prop_value, is_over)
                 if analysis["success"]:
                     results["above"].append({
                         "team": team['team'],
@@ -491,7 +504,7 @@ class NBAPropsAnalyzer:
         # Process teams below
         if "below" in surr_teams["data"]:
             for pos, team in enumerate(surr_teams["data"]["below"], 1):
-                analysis = self.analyze_vs_team(games, team['team'], prop_type, prop_value, is_over)
+                analysis = self.analyze_performance(games, team['team'], prop_type, prop_value, is_over)
                 if analysis["success"]:
                     results["below"].append({
                         "team": team['team'],
@@ -549,7 +562,7 @@ class NBAPropsAnalyzer:
         matched_team = match_result["data"]
         
         # Analyze performance against matched team
-        direct_analysis = self.analyze_vs_team(games, matched_team['team'], prop_type, prop_value, is_over)
+        direct_analysis = self.analyze_performance(games, matched_team['team'], prop_type, prop_value, is_over)
         
         # Analyze surrounding teams
         surr_analysis = self.analyze_surrounding_teams(
@@ -578,7 +591,8 @@ class NBAPropsAnalyzer:
             'assists': 'assists',
             'steals': 'steals',
             'blocks': 'blocks',
-            'threes': 'threes'
+            'threes': 'threes',
+            'pra': 'pra'  # Add PRA to stat map
         }
         
         stat_key = stat_map.get(prop_type.lower())
@@ -587,7 +601,11 @@ class NBAPropsAnalyzer:
             
         # Calculate season stats
         for game in games:
-            stat_value = game.get(stat_key, 0)
+            if stat_key == 'pra':
+                stat_value = game['points'] + game['rebounds'] + game['assists']
+            else:
+                stat_value = game.get(stat_key, 0)
+                
             total_value += stat_value
             total_games += 1
             
@@ -630,8 +648,8 @@ class NBAPropsAnalyzer:
                 is_over
             )
             
-            # Direct matchup analysis
-            direct_analysis = self.analyze_vs_team(
+            # Direct matchup analysis - use analyze_performance instead of analyze_vs_team
+            direct_analysis = self.analyze_performance(
                 games_result["data"],
                 opponent,
                 prop_type,
@@ -702,7 +720,7 @@ def main():
     
     # Get user input
     player_name = input("Enter player name: ")
-    print("\nProp Types: points, rebounds, assists, steals, blocks, threes")
+    print("\nProp Types: points, rebounds, assists, steals, blocks, threes, pra")
     prop_type = input("Enter prop type: ").lower()
     prop_value = float(input("Enter prop value: "))
     is_over = input("Over or Under? (o/u): ").lower().startswith('o')
