@@ -68,7 +68,7 @@ class NBAPropsAnalyzer:
 
     def scrape_standings(self) -> Dict:
         """Scrape current NBA standings"""
-        print("Fetching NBA standings...")
+        #print("Fetching NBA standings...")
         url = "https://www.espn.com/nba/standings"
         
         try:
@@ -76,7 +76,7 @@ class NBAPropsAnalyzer:
             soup = BeautifulSoup(response.content, 'html.parser')
             
             tables = soup.find_all('table', class_='Table')
-            print(f"\nFound {len(tables)} tables")
+            #print(f"\nFound {len(tables)} tables")
             
             standings = {'Eastern': [], 'Western': []}
             
@@ -150,19 +150,19 @@ class NBAPropsAnalyzer:
         }
         
         try:
-            print(f"\nSearching for {player_name}...")
+            #print(f"\nSearching for {player_name}...")
             response = requests.get(search_url, params=params)
             data = response.json()
-            print(f"Debug - Search response: {data}")  # Print response data
+            #print(f"Debug - Search response: {data}")  # Print response data
             
             if 'items' in data and len(data['items']) > 0:
                 for item in data['items']:
                     if item['displayName'].lower() == player_name.lower():
                         player_id = item['id']
-                        print(f"Debug - Found player ID: {player_id}")
+                        #print(f"Debug - Found player ID: {player_id}")
                         return {"success": True, "id": player_id}
                 player_id = data['items'][0]['id']
-                print(f"Debug - Using first result ID: {player_id}")
+                #print(f"Debug - Using first result ID: {player_id}")
                 return {"success": True, "id": player_id}
             return {"success": False, "error": "Player not found"}
             
@@ -171,11 +171,11 @@ class NBAPropsAnalyzer:
 
     def clean_opponent_name(self, opponent: str) -> str:
         """Clean opponent name from game log"""
-        print(f"\nDebug - Cleaning opponent name: {opponent}")
+        #print(f"\nDebug - Cleaning opponent name: {opponent}")
         
         # Remove any vs or @ prefix
         cleaned = opponent.replace('vs', '').replace('@', '').strip()
-        print(f"After removing prefixes: {cleaned}")
+        #print(f"After removing prefixes: {cleaned}")
         
         # Team abbreviation mapping
         team_map = {
@@ -212,7 +212,7 @@ class NBAPropsAnalyzer:
         }
         
         team_name = team_map.get(cleaned, cleaned)
-        print(f"Final team name: {team_name}")
+        #print(f"Final team name: {team_name}")
         return team_name
 
     def get_current_nba_season(self) -> str:
@@ -236,11 +236,11 @@ class NBAPropsAnalyzer:
         url = f"https://www.espn.com/nba/player/gamelog/_/id/{player_id}"
 
         try:
-            print(f"Fetching game logs from: {url}")
+            #print(f"Fetching game logs from: {url}")
             response = requests.get(url, headers=self.headers)
             soup = BeautifulSoup(response.content, 'html.parser')
             game_tables = soup.find_all('table', class_='Table')
-            print(f"Found {len(game_tables)} tables")
+            #print(f"Found {len(game_tables)} tables")
 
             all_games = []
             exclude_after_marker = False  # Flag to stop processing after the marker row
@@ -254,7 +254,7 @@ class NBAPropsAnalyzer:
                     # Check for the marker row and set the flag to stop processing
                     if row_text.startswith("Regular Season StatsMINFGFG%3PT3P%FTFT%REBASTBLKSTLPFTOPTS"):
                         exclude_after_marker = True
-                        print(f"Found marker row: {row_text}. Excluding subsequent rows.")
+                        #print(f"Found marker row: {row_text}. Excluding subsequent rows.")
                         break
 
                     # Skip rows after the marker
@@ -264,13 +264,13 @@ class NBAPropsAnalyzer:
                     # Parse valid game rows
                     cells = row.find_all('td')
                     if len(cells) < 2:  # Ensure valid row structure
-                        print(f"Skipping invalid or summary row: {row_text}")
+                        #print(f"Skipping invalid or summary row: {row_text}")
                         continue
 
                     # Extract and validate date
                     date_text = cells[0].text.strip()
                     if not re.match(r'\w{3} \d{1,2}/\d{1,2}', date_text):
-                        print(f"Invalid date format, skipping: {date_text}")
+                        #print(f"Invalid date format, skipping: {date_text}")
                         continue
 
                     # Process regular-season game data
@@ -290,14 +290,14 @@ class NBAPropsAnalyzer:
                             'pra': pra
                         }
                         all_games.append(game_data)
-                        print(f"Regular season game added: {game_data}")
+                        #print(f"Regular season game added: {game_data}")
 
                     except Exception as e:
                         print(f"Error processing row: {e}")
                         continue
 
             # Debug output for parsed games
-            print(f"Total regular season games found: {len(all_games)}")
+            #print(f"Total regular season games found: {len(all_games)}")
             return {"success": True, "data": all_games}
 
         except Exception as e:
@@ -347,11 +347,11 @@ class NBAPropsAnalyzer:
         relevant_games = []
         
         # Debug print
-        print(f"\nDebug - Looking for games against {team}")
+        #print(f"\nDebug - Looking for games against {team}")
         for game in games:
-            print(f"Debug - Checking game: Opponent = {game['opponent']}, Points = {game['points']}")
+            #print(f"Debug - Checking game: Opponent = {game['opponent']}, Points = {game['points']}")
             if game['opponent'] == team:
-                print(f"Debug - Found matching game!")
+                #print(f"Debug - Found matching game!")
                 relevant_games.append(game)
         
         if not relevant_games:
@@ -422,18 +422,18 @@ class NBAPropsAnalyzer:
             return {"success": False, "error": f"Invalid prop type: {prop_type}"}
         
         # Debug print
-        print(f"\nDebug - Looking for games against {team}")
+        #print(f"\nDebug - Looking for games against {team}")
         for game in games:
             if stat_key == 'pra':
                 game_stat = game['points'] + game['rebounds'] + game['assists']  # Calculate PRA directly
-                print(f"Debug - Checking game: Opponent = {game['opponent']}, PRA = {game_stat} " +
-                      f"(P:{game['points']} R:{game['rebounds']} A:{game['assists']})")
+                #print(f"Debug - Checking game: Opponent = {game['opponent']}, PRA = {game_stat} " +
+                      #f"(P:{game['points']} R:{game['rebounds']} A:{game['assists']})")
             else:
                 game_stat = game[stat_key]
-                print(f"Debug - Checking game: Opponent = {game['opponent']}, {stat_key.title()} = {game_stat}")
+                #print(f"Debug - Checking game: Opponent = {game['opponent']}, {stat_key.title()} = {game_stat}")
             
             if game['opponent'] == team:
-                print(f"Debug - Found matching game!")
+                #print(f"Debug - Found matching game!")
                 game_with_stat = game.copy()
                 game_with_stat['stat_value'] = game_stat
                 relevant_games.append(game_with_stat)
