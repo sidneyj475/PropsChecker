@@ -231,7 +231,6 @@ class NBAPropsAnalyzer:
             return player_id_result
         
         player_id = player_id_result["id"]
-        # Using the basic player gamelog URL
         url = f"https://www.espn.com/nba/player/gamelog/_/id/{player_id}"
         
         try:
@@ -239,53 +238,48 @@ class NBAPropsAnalyzer:
             response = requests.get(url, headers=self.headers)
             
             soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Print table count for debugging
-            print(f"\nDebug - Looking for game tables")
             game_tables = soup.find_all('table', class_='Table')
+            print(f"\nDebug - Looking for game tables")
             print(f"Found {len(game_tables)} tables")
             
             all_games = []
             
-            # Process each table that might contain game data
             for table in game_tables:
                 rows = table.find_all('tr')[1:]  # Skip header row
                 
                 for row in rows:
                     cells = row.find_all('td')
                     
-                    # Skip rows that don't have enough cells or aren't game rows
                     if len(cells) >= 15 and any(month in cells[0].text.strip().lower() 
                         for month in ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']):
                         try:
                             raw_opponent = cells[1].text.strip()
                             opponent = self.clean_opponent_name(raw_opponent)
                             
-                            points_str = cells[16].text.strip() if len(cells) > 16 else '0'
-                            points = int(points_str) if points_str.isdigit() else 0
+                            # Fix three pointers parsing
+                            threes_str = cells[6].text.strip().split('-')[0]  # Get makes from "makes-attempts"
+                            threes = int(threes_str) if threes_str.isdigit() else 0
                             
                             game_data = {
                                 'date': cells[0].text.strip(),
                                 'opponent': opponent,
                                 'minutes': cells[3].text.strip() if len(cells) > 3 else '0',
-                                'points': points,
+                                'points': int(cells[16].text.strip() if len(cells) > 16 else '0'),
                                 'rebounds': int(cells[10].text.strip() if len(cells) > 10 else '0'),
                                 'assists': int(cells[11].text.strip() if len(cells) > 11 else '0'),
                                 'blocks': int(cells[12].text.strip() if len(cells) > 12 else '0'),
-                                'steals': int(cells[13].text.strip() if len(cells) > 13 else '0')
+                                'steals': int(cells[13].text.strip() if len(cells) > 13 else '0'),
+                                'threes': threes  # Store three pointers made
                             }
                             all_games.append(game_data)
-                            print(f"Found game: {game_data['date']} vs {game_data['opponent']} - {game_data['points']} pts")
+                            print(f"Found game: {game_data['date']} vs {game_data['opponent']} - " +
+                                  f"{game_data['points']} pts, {game_data['threes']} threes")
                             
                         except (IndexError, ValueError) as e:
                             print(f"Error processing row: {str(e)}")
                             continue
             
             print(f"\nFound {len(all_games)} total games")
-            
-            if not all_games:
-                return {"success": False, "error": "No games found"}
-                
             return {"success": True, "data": all_games}
             
         except Exception as e:
@@ -352,6 +346,82 @@ class NBAPropsAnalyzer:
             }
         }
 
+    def analyze_performance(self, games: List[Dict], team: str, prop_type: str, prop_value: float, is_over: bool) -> Dict:
+        """Analyze player's performance against specific team"""
+        relevant_games = []
+        
+        # Map property types to game log keys
+        stat_map = {
+            'points': 'points',
+            'rebounds': 'rebounds',
+            'assists': 'assists',
+            'steals': 'steals',
+            'blocks': 'blocks',
+            'threes': 'threes',
+            'three pointers': 'threes',  # Add alternative naming
+            '3pt': 'threes',             # Add alternative naming
+            '3s': 'threes'               # Add alternative naming
+        }
+        
+        stat_key = stat_map.get(prop_type.lower())
+        if not stat_key:
+            return {"success": False, "error": "Invalid prop type"}
+        
+        # Debug print
+        print(f"\nDebug - Looking for games against {team}")
+        for game in games:
+            print(f"Debug - Checking game: Opponent = {game['opponent']}, {stat_key.title()} = {game[stat_key]}")
+            if game['opponent'] == team:
+                print(f"Debug - Found matching game!")
+                relevant_games.append(game)
+        
+        if not relevant_games:
+            return {
+                "success": True,
+                "data": {
+                    "games_played": 0,
+                    "average": 0,
+                    "hit_rate": 0,
+                    "hit_count": 0,
+                    "performances": []
+                }
+            }
+        
+        # Calculate stats
+        total_value = 0
+        hits = 0
+        performances = []
+        
+        for game in relevant_games:
+            stat_value = game[stat_key]
+            total_value += stat_value
+            
+            # Check if prop hit
+            if is_over:
+                hit = stat_value > prop_value
+            else:
+                hit = stat_value < prop_value
+                
+            if hit:
+                hits += 1
+                
+            performances.append({
+                'date': game['date'],
+                'value': stat_value,
+                'hit': hit
+            })
+        
+        return {
+            "success": True,
+            "data": {
+                "games_played": len(relevant_games),
+                "average": total_value / len(relevant_games),
+                "hit_rate": (hits / len(relevant_games)) * 100,
+                "hit_count": hits,
+                "performances": performances
+            }
+        }
+    
     def get_surrounding_teams(self, team_name: str, standings: Dict, positions: int = 2) -> Dict:
         """Get teams above and below the given team in standings"""
         try:
