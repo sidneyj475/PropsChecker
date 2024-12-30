@@ -253,6 +253,14 @@ class NBAPropsAnalyzer:
                     if len(cells) >= 15 and any(month in cells[0].text.strip().lower() 
                         for month in ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']):
                         try:
+                            # Check if this is a preseason game by examining the result column
+                            result = cells[2].text.strip() if len(cells) > 2 else ''
+                            
+                            # Skip if there's no W/L in the result (preseason games often lack this)
+                            if not any(x in result for x in ['W', 'L']):
+                                print(f"Skipping probable preseason game: {cells[0].text.strip()}")
+                                continue
+                                
                             raw_opponent = cells[1].text.strip()
                             opponent = self.clean_opponent_name(raw_opponent)
                             
@@ -264,6 +272,7 @@ class NBAPropsAnalyzer:
                             game_data = {
                                 'date': cells[0].text.strip(),
                                 'opponent': opponent,
+                                'result': result,  # Store the result for reference
                                 'minutes': cells[3].text.strip() if len(cells) > 3 else '0',
                                 'points': points,
                                 'rebounds': rebounds,
@@ -271,21 +280,18 @@ class NBAPropsAnalyzer:
                                 'blocks': int(cells[12].text.strip() if len(cells) > 12 else '0'),
                                 'steals': int(cells[13].text.strip() if len(cells) > 13 else '0'),
                                 'threes': int(cells[6].text.strip().split('-')[0]),
-                                'pra': pra  # Store PRA in game data
+                                'pra': pra
                             }
                             
-                            print(f"Debug - Game data created:")
-                            print(game_data)
-                            
                             all_games.append(game_data)
-                            print(f"Found game: {game_data['date']} vs {game_data['opponent']} - " +
+                            print(f"Found regular season game: {game_data['date']} vs {game_data['opponent']} - " +
                                   f"PRA: {pra} (P:{points} R:{rebounds} A:{assists})")
                             
                         except (IndexError, ValueError) as e:
                             print(f"Error processing row: {str(e)}")
                             continue
             
-            print(f"\nFound {len(all_games)} total games")
+            print(f"\nFound {len(all_games)} regular season games")
             return {"success": True, "data": all_games}
             
         except Exception as e:
