@@ -3,6 +3,8 @@ from bs4 import BeautifulSoup
 import time
 from typing import Dict, List, Optional, Union
 from datetime import datetime
+import re
+
 
 class NBAPropsAnalyzer:
     def __init__(self):
@@ -221,82 +223,124 @@ class NBAPropsAnalyzer:
         """
         current_date = datetime.now()
         if current_date.month >= 10:  # New season starts in October
-            return str(current_date.year)
-        return str(current_date.year - 1)
+            return f"{current_date.year}-{current_date.year + 1}"
+        return f"{current_date.year - 1}-{current_date.year}"
 
     def get_player_games(self, player_name: str) -> Dict:
-        """Get player's game logs"""
+        """Get player's game logs."""
         player_id_result = self.get_player_id(player_name)
         if not player_id_result["success"]:
             return player_id_result
-        
+
         player_id = player_id_result["id"]
         url = f"https://www.espn.com/nba/player/gamelog/_/id/{player_id}"
-        
+
         try:
             print(f"Fetching game logs from: {url}")
             response = requests.get(url, headers=self.headers)
-            
             soup = BeautifulSoup(response.content, 'html.parser')
             game_tables = soup.find_all('table', class_='Table')
-            print(f"\nDebug - Looking for game tables")
             print(f"Found {len(game_tables)} tables")
-            
+
             all_games = []
-            
+            exclude_after_marker = False  # Flag to stop processing after the marker row
+
             for table in game_tables:
-                rows = table.find_all('tr')[1:]  # Skip header row
-                
+                rows = table.find_all('tr')
+
                 for row in rows:
+                    row_text = row.get_text(strip=True)
+
+                    # Check for the marker row and set the flag to stop processing
+                    if row_text.startswith("Regular Season StatsMINFGFG%3PT3P%FTFT%REBASTBLKSTLPFTOPTS"):
+                        exclude_after_marker = True
+                        print(f"Found marker row: {row_text}. Excluding subsequent rows.")
+                        break
+
+                    # Skip rows after the marker
+                    if exclude_after_marker:
+                        continue
+
+                    # Parse valid game rows
                     cells = row.find_all('td')
-                    
-                    if len(cells) >= 15 and any(month in cells[0].text.strip().lower() 
-                        for month in ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']):
-                        try:
-                            # Check if this is a preseason game by examining the result column
-                            result = cells[2].text.strip() if len(cells) > 2 else ''
-                            
-                            # Skip if there's no W/L in the result (preseason games often lack this)
-                            if not any(x in result for x in ['W', 'L']):
-                                print(f"Skipping probable preseason game: {cells[0].text.strip()}")
-                                continue
-                                
-                            raw_opponent = cells[1].text.strip()
-                            opponent = self.clean_opponent_name(raw_opponent)
-                            
-                            points = int(cells[16].text.strip() if len(cells) > 16 else '0')
-                            rebounds = int(cells[10].text.strip() if len(cells) > 10 else '0')
-                            assists = int(cells[11].text.strip() if len(cells) > 11 else '0')
-                            pra = points + rebounds + assists  # Calculate PRA immediately
-                            
-                            game_data = {
-                                'date': cells[0].text.strip(),
-                                'opponent': opponent,
-                                'result': result,  # Store the result for reference
-                                'minutes': cells[3].text.strip() if len(cells) > 3 else '0',
-                                'points': points,
-                                'rebounds': rebounds,
-                                'assists': assists,
-                                'blocks': int(cells[12].text.strip() if len(cells) > 12 else '0'),
-                                'steals': int(cells[13].text.strip() if len(cells) > 13 else '0'),
-                                'threes': int(cells[6].text.strip().split('-')[0]),
-                                'pra': pra
-                            }
-                            
-                            all_games.append(game_data)
-                            print(f"Found regular season game: {game_data['date']} vs {game_data['opponent']} - " +
-                                  f"PRA: {pra} (P:{points} R:{rebounds} A:{assists})")
-                            
-                        except (IndexError, ValueError) as e:
-                            print(f"Error processing row: {str(e)}")
-                            continue
-            
-            print(f"\nFound {len(all_games)} regular season games")
+                    if len(cells) < 2:  # Ensure valid row structure
+                        print(f"Skipping invalid or summary row: {row_text}")
+                        continue
+
+                    # Extract and validate date
+                    date_text = cells[0].text.strip()
+                    if not re.match(r'\w{3} \d{1,2}/\d{1,2}', date_text):
+                        print(f"Invalid date format, skipping: {date_text}")
+                        continue
+
+                    # Process regular-season game data
+                    try:
+                        opponent = self.clean_opponent_name(cells[1].text.strip())
+                        points = int(cells[16].text.strip()) if len(cells) > 16 else 0
+                        rebounds = int(cells[10].text.strip()) if len(cells) > 10 else 0
+                        assists = int(cells[11].text.strip()) if len(cells) > 11 else 0
+                        pra = points + rebounds + assists
+
+                        game_data = {
+                            'date': date_text,
+                            'opponent': opponent,
+                            'points': points,
+                            'rebounds': rebounds,
+                            'assists': assists,
+                            'pra': pra
+                        }
+                        all_games.append(game_data)
+                        print(f"Regular season game added: {game_data}")
+
+                    except Exception as e:
+                        print(f"Error processing row: {e}")
+                        continue
+
+            # Debug output for parsed games
+            print(f"Total regular season games found: {len(all_games)}")
             return {"success": True, "data": all_games}
-            
+
         except Exception as e:
-            print(f"Error in get_player_games: {str(e)}")
+            print(f"Error in get_player_games: {e}")
             return {"success": False, "error": str(e)}
+
+    def is_regular_season_game(self, date_text: str) -> bool:
+        """Check if a game date is in the regular season."""
+        try:
+            # Dynamically determine the current NBA season's start date
+            now = datetime.now()
+            if now.month >= 10:  # NBA season starts in October
+                season_start_year = now.year
+            else:  # Before October, we are in the previous season
+                season_start_year = now.year - 1
+
+            # Regular season start date: October 22
+            season_start_date = datetime(season_start_year, 10, 22)
+
+            # Parse the game date (e.g., "Sat 12/28")
+            date_parts = date_text.split()
+            month_map = {
+                'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+                'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+            }
+
+            if len(date_parts) >= 3:
+                month = month_map.get(date_parts[1].lower(), 0)
+                day = int(date_parts[2])
+
+                # Determine game year
+                if month < 7:  # Jan-Jun belong to the next calendar year
+                    game_year = season_start_year + 1
+                else:  # Jul-Dec belong to the current calendar year
+                    game_year = season_start_year
+
+                game_date = datetime(game_year, month, day)
+
+                # Exclude games before the regular season start date
+                return game_date >= season_start_date
+        except Exception as e:
+            print(f"Error parsing date: {e}")
+            return False
 
     def analyze_vs_team(self, games: List[Dict], team: str, prop_type: str, prop_value: float, is_over: bool) -> Dict:
         """Analyze player's performance against specific team"""
