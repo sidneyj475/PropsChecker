@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import time
 from typing import Dict, List, Optional, Union
+from datetime import datetime
 
 class NBAPropsAnalyzer:
     def __init__(self):
@@ -161,77 +162,563 @@ class NBAPropsAnalyzer:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def get_player_games(self, player_name: str) -> Dict:
-        """Get player's game logs"""
+    def clean_opponent_name(self, opponent: str) -> str:
+        """Clean opponent name from game log"""
+        print(f"\nDebug - Cleaning opponent name: {opponent}")
+        
+        # Remove any vs or @ prefix
+        cleaned = opponent.replace('vs', '').replace('@', '').strip()
+        print(f"After removing prefixes: {cleaned}")
+        
+        # Team abbreviation mapping
+        team_map = {
+            'MEM': 'Grizzlies',
+            'GSW': 'Warriors',
+            'PHX': 'Suns',
+            'SAC': 'Kings',
+            'LAL': 'Lakers',
+            'LAC': 'Clippers',
+            'DAL': 'Mavericks',
+            'HOU': 'Rockets',
+            'NOP': 'Pelicans',
+            'SAS': 'Spurs',
+            'DEN': 'Nuggets',
+            'MIN': 'Timberwolves',
+            'POR': 'Trail Blazers',
+            'OKC': 'Thunder',
+            'UTA': 'Jazz',
+            'BOS': 'Celtics',
+            'BKN': 'Nets',
+            'NYK': 'Knicks',
+            'PHI': '76ers',
+            'TOR': 'Raptors',
+            'CHI': 'Bulls',
+            'CLE': 'Cavaliers',
+            'DET': 'Pistons',
+            'IND': 'Pacers',
+            'MIL': 'Bucks',
+            'ATL': 'Hawks',
+            'CHA': 'Hornets',
+            'MIA': 'Heat',
+            'ORL': 'Magic',
+            'WAS': 'Wizards',
+            'GS': 'Warriors',  # Add alternative abbreviations
+            'NO': 'Pelicans',
+            'SA': 'Spurs',
+            'NY': 'Knicks',
+            'UTAH': 'Jazz'
+        }
+        
+        team_name = team_map.get(cleaned, cleaned)
+        print(f"Final team name: {team_name}")
+        return team_name
+
+    def get_current_nba_season(self) -> str:
+        """
+        Determine the current NBA season.
+        NBA season spans two years and officially starts in October.
+        Returns the later year (e.g., 2025 for the 2024-25 season)
+        """
+        current_date = datetime.now()
+        if current_date.month >= 10:  # New season starts in October
+            return str(current_date.year + 1)
+        return str(current_date.year)
+
+    def get_player_games(self, player_name: str, season: str = None) -> Dict:
+        """Get player's game logs for specified season or current season"""
         player_id_result = self.get_player_id(player_name)
         if not player_id_result["success"]:
             return player_id_result
         
+        # If no season specified, use current season
+        if not season:
+            season = self.get_current_nba_season()
+        
         player_id = player_id_result["id"]
-        url = f"https://www.espn.com/nba/player/gamelog/_/id/{player_id}"
+        
+        # Try both regular season and postseason URLs
+        urls = [
+            f"https://www.espn.com/nba/player/gamelog/_/id/{player_id}/type/nba/year/{season}/seasontype/2",  # Regular season
+            f"https://www.espn.com/nba/player/gamelog/_/id/{player_id}/type/nba/year/{season}/seasontype/3"   # Postseason
+        ]
+        
+        all_games = []
         
         try:
-            print(f"Fetching game logs...")
-            response = requests.get(url, headers=self.headers)
-            soup = BeautifulSoup(response.content, 'html.parser')
+            print(f"Fetching game logs for {int(season)-1}-{season} season...")
             
-            # Print raw HTML for debugging
-            print("\nDebug - Looking for game log table...")
-            
-            table = soup.find('table', class_='Table')
-            if not table:
-                print("No table found")
-                return {"success": False, "error": "Game log table not found"}
-            
-            games = []
-            rows = table.find_all('tr')[2:]  # Skip header rows
-            
-            for row in rows:
-                cells = row.find_all('td')
-                if len(cells) >= 15:  # Make sure row has enough columns
-                    try:
-                        # Print raw data for debugging
-                        print(f"\nDebug - Processing game: {cells[0].text.strip()} vs {cells[1].text.strip()}")
-                        
-                        game_data = {
-                            'date': cells[0].text.strip(),
-                            'opponent': self.clean_team_name(cells[1].text.strip()),
-                            'minutes': cells[2].text.strip(),
-                            'fg': cells[3].text.strip(),
-                            'threes': cells[4].text.strip(),
-                            'ft': cells[5].text.strip(),
-                            'rebounds': cells[6].text.strip(),
-                            'assists': cells[7].text.strip(),
-                            'blocks': cells[8].text.strip(),
-                            'steals': cells[9].text.strip(),
-                            'points': cells[10].text.strip()
-                        }
-                        games.append(game_data)
-                        print(f"Debug - Processed game: {game_data['points']} points against {game_data['opponent']}")
-                    except IndexError as e:
-                        print(f"Debug - Error processing row: {str(e)}")
+            for url in urls:
+                response = requests.get(url, headers=self.headers)
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                table = soup.find('table', class_='Table')
+                if not table:
+                    continue
+                
+                rows = table.find_all('tr')
+                header_found = False
+                
+                for row in rows:
+                    # Look for the header row to identify the start of game data
+                    headers = row.find_all('th')
+                    if headers and any('DATE' in h.text for h in headers):
+                        header_found = True
                         continue
+                        
+                    if not header_found:
+                        continue
+                        
+                    cells = row.find_all('td')
+                    
+                    # Skip rows that don't have enough cells or are monthly summaries
+                    if len(cells) >= 15 and any(month in cells[0].text.strip().lower() 
+                        for month in ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']):
+                        try:
+                            raw_opponent = cells[1].text.strip()
+                            opponent = self.clean_opponent_name(raw_opponent)
+                            
+                            game_data = {
+                                'date': cells[0].text.strip(),
+                                'opponent': opponent,
+                                'minutes': int(cells[3].text.strip()),
+                                'points': int(cells[16].text.strip()),
+                                'rebounds': int(cells[10].text.strip()),
+                                'assists': int(cells[11].text.strip()),
+                                'blocks': int(cells[12].text.strip()),
+                                'steals': int(cells[13].text.strip())
+                            }
+                            all_games.append(game_data)
+                            print(f"Found game: {game_data['date']} vs {game_data['opponent']} - {game_data['points']} pts")
+                            
+                        except (IndexError, ValueError) as e:
+                            print(f"Skipping row due to error: {str(e)}")
+                            continue
             
-            print(f"\nFound {len(games)} games")
-            return {"success": True, "data": games}
+            print(f"\nFound {len(all_games)} total games for the {int(season)-1}-{season} season")
+            
+            if not all_games:
+                return {"success": False, "error": "No games found for the specified season"}
+                
+            return {"success": True, "data": all_games}
             
         except Exception as e:
-            print(f"Debug - Exception: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+    def analyze_vs_team(self, games: List[Dict], team: str, prop_type: str, prop_value: float, is_over: bool) -> Dict:
+        """Analyze player's performance against specific team"""
+        relevant_games = []
+        
+        # Debug print
+        print(f"\nDebug - Looking for games against {team}")
+        for game in games:
+            print(f"Debug - Checking game: Opponent = {game['opponent']}, Points = {game['points']}")
+            if game['opponent'] == team:
+                print(f"Debug - Found matching game!")
+                relevant_games.append(game)
+        
+        if not relevant_games:
+            return {
+                "success": True,
+                "data": {
+                    "games_played": 0,
+                    "average": 0,
+                    "hit_rate": 0,
+                    "hit_count": 0,
+                    "performances": []
+                }
+            }
+        
+        # Calculate stats
+        total_value = 0
+        hits = 0
+        performances = []
+        
+        for game in relevant_games:
+            stat_key = prop_type.lower()
+            stat_value = game.get(stat_key, 0)
+            total_value += stat_value
+            
+            # Check if prop hit
+            if is_over:
+                hit = stat_value > prop_value
+            else:
+                hit = stat_value < prop_value
+                
+            if hit:
+                hits += 1
+                
+            performances.append({
+                'date': game['date'],
+                'value': stat_value,
+                'hit': hit
+            })
+        
+        return {
+            "success": True,
+            "data": {
+                "games_played": len(relevant_games),
+                "average": total_value / len(relevant_games),
+                "hit_rate": (hits / len(relevant_games)) * 100,
+                "hit_count": hits,
+                "performances": performances
+            }
+        }
+
+    def get_surrounding_teams(self, team_name: str, standings: Dict, positions: int = 2) -> Dict:
+        """Get teams above and below the given team in standings"""
+        try:
+            # Find which conference the team is in
+            team_conf = None
+            team_index = None
+            
+            for conf in ['Eastern', 'Western']:
+                for i, team in enumerate(standings[conf]):
+                    if team['team'] == team_name:
+                        team_conf = conf
+                        team_index = i
+                        break
+                if team_conf:
+                    break
+            
+            if not team_conf:
+                return {"success": False, "error": f"Team {team_name} not found in standings"}
+            
+            teams = {
+                "above": [],
+                "below": []
+            }
+            
+            # Get teams above
+            start_above = max(0, team_index - positions)
+            for i in range(start_above, team_index):
+                team = standings[team_conf][i]
+                teams["above"].append(team)
+            
+            # Get teams below
+            end_below = min(len(standings[team_conf]), team_index + positions + 1)
+            for i in range(team_index + 1, end_below):
+                team = standings[team_conf][i]
+                teams["below"].append(team)
+            
+            return {"success": True, "data": teams}
+            
+        except Exception as e:
+            print(f"Error in get_surrounding_teams: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+    def analyze_surrounding_teams(self, games: List[Dict], opponent: str, standings: Dict,
+                                prop_type: str, prop_value: float, is_over: bool, positions: int = 2) -> Dict:
+        """Analyze performance against teams surrounding the opponent in standings"""
+        # Get surrounding teams
+        surr_teams = self.get_surrounding_teams(opponent, standings, positions)
+        if not surr_teams["success"]:
+            return surr_teams
+            
+        results = {
+            "above": [],
+            "below": []
+        }
+        
+        # Process teams above
+        if "above" in surr_teams["data"]:
+            for pos, team in enumerate(surr_teams["data"]["above"], 1):
+                analysis = self.analyze_vs_team(games, team['team'], prop_type, prop_value, is_over)
+                if analysis["success"]:
+                    results["above"].append({
+                        "team": team['team'],
+                        "position_diff": -pos,  # Negative for above
+                        "analysis": analysis["data"]
+                    })
+        
+        # Process teams below
+        if "below" in surr_teams["data"]:
+            for pos, team in enumerate(surr_teams["data"]["below"], 1):
+                analysis = self.analyze_vs_team(games, team['team'], prop_type, prop_value, is_over)
+                if analysis["success"]:
+                    results["below"].append({
+                        "team": team['team'],
+                        "position_diff": pos,  # Positive for below
+                        "analysis": analysis["data"]
+                    })
+        
+        return {"success": True, "data": results}
+
+    def find_win_pct_match(self, team_name: str, standings: Dict) -> Dict:
+        """Find team in opposite conference with closest win percentage"""
+        try:
+            # Find team's conference and win percentage
+            team_conf = None
+            team_win_pct = None
+            team_obj = None
+            
+            for conf in ['Eastern', 'Western']:
+                for team in standings[conf]:
+                    if team['team'] == team_name:
+                        team_conf = conf
+                        team_win_pct = team['win_pct']
+                        team_obj = team
+                        break
+                if team_conf:
+                    break
+            
+            if not team_conf:
+                return {"success": False, "error": f"Team {team_name} not found in standings"}
+                
+            # Find closest match in opposite conference
+            opp_conf = 'Western' if team_conf == 'Eastern' else 'Eastern'
+            closest_team = min(
+                standings[opp_conf],
+                key=lambda x: abs(x['win_pct'] - team_win_pct)
+            )
+            
+            return {
+                "success": True,
+                "data": closest_team
+            }
+            
+        except Exception as e:
+            print(f"Error in find_win_pct_match: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+    def analyze_cross_conference(self, games: List[Dict], opponent: str, standings: Dict,
+                                prop_type: str, prop_value: float, is_over: bool) -> Dict:
+        """Analyze performance against similar win percentage team in opposite conference"""
+        # Find matching team in opposite conference
+        match_result = self.find_win_pct_match(opponent, standings)
+        if not match_result["success"]:
+            return match_result
+            
+        matched_team = match_result["data"]
+        
+        # Analyze performance against matched team
+        direct_analysis = self.analyze_vs_team(games, matched_team['team'], prop_type, prop_value, is_over)
+        
+        # Analyze surrounding teams
+        surr_analysis = self.analyze_surrounding_teams(
+            games, matched_team['team'], standings, prop_type, prop_value, is_over
+        )
+        
+        return {
+            "success": True,
+            "data": {
+                "matched_team": matched_team['team'],
+                "win_pct": matched_team['win_pct'],
+                "direct_analysis": direct_analysis["data"],
+                "surrounding_teams": surr_analysis["data"] if surr_analysis["success"] else None
+            }
+        }
+
+    def calculate_overall_stats(self, games: List[Dict], prop_type: str, prop_value: float, is_over: bool) -> Dict:
+        """Calculate overall season stats"""
+        total_games = 0
+        total_value = 0
+        hits = 0
+        
+        stat_map = {
+            'points': 'points',
+            'rebounds': 'rebounds',
+            'assists': 'assists',
+            'steals': 'steals',
+            'blocks': 'blocks',
+            'threes': 'threes'
+        }
+        
+        stat_key = stat_map.get(prop_type.lower())
+        if not stat_key:
+            return {"success": False, "error": "Invalid prop type"}
+            
+        # Calculate season stats
+        for game in games:
+            stat_value = game.get(stat_key, 0)
+            total_value += stat_value
+            total_games += 1
+            
+            if is_over:
+                if stat_value > prop_value:
+                    hits += 1
+            else:
+                if stat_value < prop_value:
+                    hits += 1
+        
+        return {
+            "success": True,
+            "data": {
+                "games_played": total_games,
+                "season_average": total_value / total_games if total_games > 0 else 0,
+                "season_hit_rate": (hits / total_games * 100) if total_games > 0 else 0,
+                "season_hits": hits
+            }
+        }
+
+    def perform_full_analysis(self, player_name: str, prop_type: str, prop_value: float,
+                            opponent: str, is_over: bool, season: str = None) -> Dict:
+        """Perform complete analysis using all components"""
+        try:
+            # Get standings
+            standings_result = self.scrape_standings()
+            if not standings_result["success"]:
+                return standings_result
+            
+            # Get player's game logs for specified season
+            games_result = self.get_player_games(player_name, season)
+            if not games_result["success"]:
+                return games_result
+                
+            # Calculate overall stats
+            overall_stats = self.calculate_overall_stats(
+                games_result["data"],
+                prop_type,
+                prop_value,
+                is_over
+            )
+            
+            # Direct matchup analysis
+            direct_analysis = self.analyze_vs_team(
+                games_result["data"],
+                opponent,
+                prop_type,
+                prop_value,
+                is_over
+            )
+            
+            # Surrounding teams analysis
+            surr_analysis = self.analyze_surrounding_teams(
+                games_result["data"],
+                opponent,
+                standings_result["data"],
+                prop_type,
+                prop_value,
+                is_over
+            )
+            
+            # Cross-conference analysis
+            cross_conf_analysis = self.analyze_cross_conference(
+                games_result["data"],
+                opponent,
+                standings_result["data"],
+                prop_type,
+                prop_value,
+                is_over
+            )
+            
+            return {
+                "success": True,
+                "data": {
+                    "overall_stats": overall_stats["data"],
+                    "direct_matchup": direct_analysis["data"],
+                    "surrounding_teams": surr_analysis["data"],
+                    "cross_conference": cross_conf_analysis["data"]
+                }
+            }
+            
+        except Exception as e:
             return {"success": False, "error": str(e)}
 
 def main():
     analyzer = NBAPropsAnalyzer()
     
-    # Test player game log retrieval
-    player_name = input("Enter player name: ")
-    games_result = analyzer.get_player_games(player_name)
+    print("NBA Props Analyzer\n")
     
-    if games_result["success"]:
-        print(f"\nLast 5 games for {player_name}:")
-        for game in games_result["data"][:5]:
-            print(f"{game['date']} vs {game['opponent']}: {game['points']} points, {game['rebounds']} rebounds, {game['assists']} assists")
+    # Get user input
+    player_name = input("Enter player name: ")
+    current_season = analyzer.get_current_nba_season()
+    print(f"\nCurrent NBA season is {int(current_season)-1}-{current_season}")
+    use_different_season = input("Use different season? (y/n): ").lower().startswith('y')
+    
+    if use_different_season:
+        season = input("Enter season end year (e.g., 2025 for 2024-25 season): ")
     else:
-        print(f"Error: {games_result['error']}")
+        season = current_season
+        
+    print("\nProp Types: points, rebounds, assists, steals, blocks, threes")
+    prop_type = input("Enter prop type: ").lower()
+    prop_value = float(input("Enter prop value: "))
+    is_over = input("Over or Under? (o/u): ").lower().startswith('o')
+    opponent = input("Enter opponent team: ")
+    
+    # Update perform_full_analysis call to include season
+    result = analyzer.perform_full_analysis(player_name, prop_type, prop_value, opponent, is_over, season)
+    
+    if result["success"]:
+        data = result["data"]
+        prop_direction = "OVER" if is_over else "UNDER"
+        
+        print(f"\n=== Analysis for {player_name} {prop_direction} {prop_value} {prop_type} vs {opponent} ===\n")
+        
+        # Overall season stats
+        overall = data["overall_stats"]
+        print(f"Season Overview:")
+        print(f"Season Average: {overall['season_average']:.1f}")
+        print(f"Season Hit Rate: {overall['season_hit_rate']:.1f}% ({overall['season_hits']}/{overall['games_played']})\n")
+        
+        # Direct matchup results
+        print("Direct Matchup Analysis:")
+        direct = data["direct_matchup"]
+        print(f"Games vs {opponent}: {direct['games_played']}")
+        if direct['games_played'] > 0:
+            print(f"Average: {direct['average']:.1f}")
+            print(f"Hit Rate: {direct['hit_rate']:.1f}% ({direct['hit_count']}/{direct['games_played']})")
+            print("\nPerformances:")
+            for perf in direct['performances']:
+                hit_marker = "✓" if perf['hit'] else "✗"
+                print(f"{perf['date']}: {perf['value']} {hit_marker}")
+        
+        # Surrounding teams results
+        print("\nConference Standing Analysis:")
+        surr = data["surrounding_teams"]
+        
+        def print_team_analysis(team_data, position_text):
+            print(f"\n{team_data['team']} ({position_text}):")
+            analysis = team_data["analysis"]
+            print(f"Games Played: {analysis['games_played']}")
+            if analysis['games_played'] > 0:
+                print(f"Average: {analysis['average']:.1f}")
+                print(f"Hit Rate: {analysis['hit_rate']:.1f}% ({analysis['hit_count']}/{analysis['games_played']})")
+                for perf in analysis['performances']:
+                    hit_marker = "✓" if perf['hit'] else "✗"
+                    print(f"{perf['date']}: {perf['value']} {hit_marker}")
+        
+        if surr["above"]:
+            print("\nTeams Above:")
+            for team in surr["above"]:
+                print_team_analysis(team, f"{abs(team['position_diff'])} position(s) above")
+        
+        if surr["below"]:
+            print("\nTeams Below:")
+            for team in surr["below"]:
+                print_team_analysis(team, f"{team['position_diff']} position(s) below")
+        
+        # Cross-conference analysis
+        print("\nCross-Conference Analysis:")
+        cross = data["cross_conference"]
+        print(f"Matched Team: {cross['matched_team']} (Win%: {cross['win_pct']:.3f})")
+        
+        direct_cross = cross["direct_analysis"]
+        print(f"\nGames vs {cross['matched_team']}: {direct_cross['games_played']}")
+        if direct_cross['games_played'] > 0:
+            print(f"Average: {direct_cross['average']:.1f}")
+            print(f"Hit Rate: {direct_cross['hit_rate']:.1f}% ({direct_cross['hit_count']}/{direct_cross['games_played']})")
+            print("\nPerformances:")
+            for perf in direct_cross['performances']:
+                hit_marker = "✓" if perf['hit'] else "✗"
+                print(f"{perf['date']}: {perf['value']} {hit_marker}")
+        
+        if cross["surrounding_teams"]:
+            print("\nSurrounding Teams of Matched Team:")
+            surr_cross = cross["surrounding_teams"]
+            
+            if surr_cross["above"]:
+                print("\nTeams Above Matched Team:")
+                for team in surr_cross["above"]:
+                    print_team_analysis(team, f"{abs(team['position_diff'])} position(s) above")
+            
+            if surr_cross["below"]:
+                print("\nTeams Below Matched Team:")
+                for team in surr_cross["below"]:
+                    print_team_analysis(team, f"{team['position_diff']} position(s) below")
+    
+    else:
+        print(f"Error: {result['error']}")
 
 if __name__ == "__main__":
     main()
