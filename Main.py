@@ -178,23 +178,23 @@ class NBAPropsAnalyzer:
         # Team abbreviation mapping
         team_map = {
             'MEM': 'Grizzlies',
-            'GSW': 'Warriors',
+            'GS': 'Warriors',
             'PHX': 'Suns',
             'SAC': 'Kings',
             'LAL': 'Lakers',
             'LAC': 'Clippers',
             'DAL': 'Mavericks',
             'HOU': 'Rockets',
-            'NOP': 'Pelicans',
-            'SAS': 'Spurs',
+            'NO': 'Pelicans',
+            'SA': 'Spurs',
             'DEN': 'Nuggets',
             'MIN': 'Timberwolves',
             'POR': 'Trail Blazers',
             'OKC': 'Thunder',
-            'UTA': 'Jazz',
+            'UTAH': 'Jazz',
             'BOS': 'Celtics',
             'BKN': 'Nets',
-            'NYK': 'Knicks',
+            'NY': 'Knicks',
             'PHI': '76ers',
             'TOR': 'Raptors',
             'CHI': 'Bulls',
@@ -206,12 +206,7 @@ class NBAPropsAnalyzer:
             'CHA': 'Hornets',
             'MIA': 'Heat',
             'ORL': 'Magic',
-            'WAS': 'Wizards',
-            'GS': 'Warriors',  # Add alternative abbreviations
-            'NO': 'Pelicans',
-            'SA': 'Spurs',
-            'NY': 'Knicks',
-            'UTAH': 'Jazz'
+            'WSH': 'Wizards',
         }
         
         team_name = team_map.get(cleaned, cleaned)
@@ -607,6 +602,29 @@ class NBAPropsAnalyzer:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+# Let's test the core functionality with some realistic test cases
+'''
+def test_analysis():
+    analyzer = NBAPropsAnalyzer()
+    
+    # Test Case 1: LeBron James points vs Celtics
+    test_lebron = analyzer.perform_full_analysis(
+        player_name="Josh Hart",
+        prop_type="points",
+        prop_value=25.5,
+        opponent="Wizards",
+        is_over=True
+    )
+    
+    if test_lebron["success"]:
+        print("Test 1 - LeBron Analysis: Success")
+        # Verify we're getting full season data
+        total_games = test_lebron["data"]["overall_stats"]["games_played"]
+        print(f"Total games found: {total_games}")
+    else:
+        print(f"Test 1 Failed: {test_lebron['error']}")
+'''
+        
 def main():
     analyzer = NBAPropsAnalyzer()
     
@@ -706,3 +724,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    #test_analysis()
