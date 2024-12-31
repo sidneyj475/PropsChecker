@@ -281,17 +281,22 @@ class NBAPropsAnalyzer:
                         def safe_parse(value):
                             """Parses stats safely, handling ranges like '2-2' or empty cells."""
                             try:
+                                #print(f"Parsing value: {value}")  # Debug log
+
                                 if '-' in value:
                                     parts = value.split('-')
-                                    return sum(float(part) for part in parts) / len(parts)  # Average of the range
+                                    # Use the first value instead of averaging
+                                    return float(parts[0])  # Take the first part only
                                 return float(value)
                             except ValueError:
+                                print(f"Failed to parse value: {value}")  # Debug log for failures
                                 return 0.0
                             
                         points = safe_parse(cells[16].text.strip()) if len(cells) > 16 else 0.0
                         rebounds = safe_parse(cells[10].text.strip()) if len(cells) > 10 else 0.0
                         assists = safe_parse(cells[11].text.strip()) if len(cells) > 11 else 0.0
-                        threes = safe_parse(cells[8].text.strip()) if len(cells) > 8 else 0.0
+                        threes = safe_parse(cells[6].text.strip()) if len(cells) > 6 else 0.0
+                        #print(f"Parsed threes for {date_text} vs {opponent}: {threes}")  # Debug log
                         pra = points + rebounds + assists
 
                         game_data = {
@@ -690,8 +695,76 @@ class NBAPropsAnalyzer:
             }
         }
 
+    def calculate_final_probability(self, 
+                                    direct_matchups: Dict, 
+                                    surrounding_teams: Dict, 
+                                    cross_conference: Dict, 
+                                    overall_season: Dict, 
+                                    num_direct_matchups: int) -> Dict:
+        """
+        Calculate the final probability of a prop occurring based on weighted analysis.
+
+        :param direct_matchups: Analysis results for direct matchups.
+        :param surrounding_teams: Analysis results for surrounding teams.
+        :param cross_conference: Analysis results for cross-conference teams.
+        :param overall_season: Analysis results for overall season performance.
+        :param num_direct_matchups: Number of direct matchups played.
+        :return: Final probability calculation.
+        """
+        # Define max weight for direct matchups and scaling factor
+        MAX_DIRECT_WEIGHT = 40  # Maximum weight as percentage
+        SCALE_FACTOR = 4  # Each matchup adds 4% weight
+
+        # Calculate weight for direct matchups
+        direct_weight = min(num_direct_matchups * SCALE_FACTOR, MAX_DIRECT_WEIGHT)
+
+        # Remaining weight to distribute among other factors
+        remaining_weight = 100 - direct_weight
+
+        # Original weights for other factors
+        other_weights = {
+            "surrounding_teams": 15,
+            "cross_conference": 10,
+            "overall_season": 35
+        }
+        total_other_weights = sum(other_weights.values())
+
+        # Scale other weights proportionally
+        scaled_weights = {
+            key: (value / total_other_weights) * remaining_weight
+            for key, value in other_weights.items()
+        }
+
+        # Combine all weights
+        weights = {
+            "direct_matchups": direct_weight,
+            **scaled_weights
+        }
+
+        # Extract hit rates (fallback to 0 if data is missing)
+        hit_rates = {
+            "direct_matchups": direct_matchups.get("hit_rate", 0),
+            "surrounding_teams": surrounding_teams.get("hit_rate", 0),
+            "cross_conference": cross_conference.get("hit_rate", 0),
+            "overall_season": overall_season.get("season_hit_rate", 0)
+        }
+
+        # Calculate weighted probability
+        final_probability = sum(
+            hit_rates[key] * weights[key] / 100 for key in weights
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "weights": weights,
+                "hit_rates": hit_rates,
+                "final_probability": final_probability
+            }
+        }
+
     def perform_full_analysis(self, player_name: str, prop_type: str, prop_value: float,
-                            opponent: str, is_over: bool, season: str = None) -> Dict:
+                          opponent: str, is_over: bool, season: str = None) -> Dict:
         """Perform complete analysis using all components"""
         try:
             # Get standings
@@ -712,7 +785,7 @@ class NBAPropsAnalyzer:
                 is_over
             )
             
-            # Direct matchup analysis - use analyze_performance instead of analyze_vs_team
+            # Direct matchup analysis
             direct_analysis = self.analyze_performance(
                 games_result["data"],
                 opponent,
@@ -741,18 +814,30 @@ class NBAPropsAnalyzer:
                 is_over
             )
             
+            # Calculate final probability
+            num_direct_matchups = direct_analysis["data"].get("games_played", 0)
+            final_prob_result = self.calculate_final_probability(
+                direct_analysis["data"],
+                surr_analysis["data"],
+                cross_conf_analysis["data"],
+                overall_stats["data"],
+                num_direct_matchups
+            )
+
             return {
                 "success": True,
                 "data": {
                     "overall_stats": overall_stats["data"],
                     "direct_matchup": direct_analysis["data"],
                     "surrounding_teams": surr_analysis["data"],
-                    "cross_conference": cross_conf_analysis["data"]
+                    "cross_conference": cross_conf_analysis["data"],
+                    "final_probability": final_prob_result["data"]  # Ensure this is included
                 }
             }
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+
 
 # Let's test the core functionality with some realistic test cases
 '''
@@ -871,6 +956,14 @@ def main():
                 for team in surr_cross["below"]:
                     print_team_analysis(team, f"{team['position_diff']} position(s) below")
     
+        # Final probability
+        if "final_probability" in data:
+            final_prob = data["final_probability"]
+            print(f"\n=== Final Probability of Prop Occurring: {final_prob['final_probability']:.1f}% ===")
+        else:
+            print("\n=== Final Probability of Prop Occurring: Calculation Failed ===")
+
+
     else:
         print(f"Error: {result['error']}")
 
